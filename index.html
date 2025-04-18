@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Steam Guard TOTP Generator</title>
+  <style>
+    body {
+      background: #171a21;
+      color: #c7d5e0;
+      font-family: sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+    }
+    .card {
+      background: #2a475e;
+      padding: 2rem;
+      border-radius: 8px;
+      text-align: center;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      width: 300px;
+    }
+    input, button {
+      width: 100%;
+      padding: 0.6rem;
+      margin-top: 1rem;
+      border: none;
+      border-radius: 4px;
+      font-size: 1rem;
+    }
+    .code {
+      font-size: 2.5rem;
+      margin: 1rem 0;
+      letter-spacing: 0.5rem;
+      font-weight: bold;
+    }
+    .timer {
+      color: #9db2c9;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Steam Guard Code</h2>
+    <input id="secret" type="text" placeholder="Paste Base64 shared_secret"/>
+    <div class="code" id="totp">-----</div>
+    <div class="timer" id="timer">--s</div>
+    <button id="copyBtn">Copy</button>
+  </div>
+
+  <script>
+    // Decode Base64 string into Uint8Array
+    function base64ToBytes(base64) {
+      const raw = atob(base64.trim());
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; ++i) {
+        bytes[i] = raw.charCodeAt(i);
+      }
+      return bytes;
+    }
+
+    // Generate Steam Guard code following node-steam-totp logic
+    async function generateSteamCode(secretBytes) {
+      const epoch = Math.floor(Date.now() / 1000);
+      const counter = Math.floor(epoch / 30);
+      // Build 8-byte big-endian counter
+      const buf = new ArrayBuffer(8);
+      const view = new DataView(buf);
+      view.setUint32(0, 0);                // high 4 bytes zero
+      view.setUint32(4, counter);         // low 4 bytes
+      // Import key and compute HMAC-SHA1
+      const key = await crypto.subtle.importKey(
+        'raw', secretBytes, { name: 'HMAC', hash: 'SHA-1' },
+        false, ['sign']
+      );
+      const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, buf));
+      const offset = sig[sig.length - 1] & 0x0f;
+      const slice = sig.slice(offset, offset + 4);
+      let codeInt = (new DataView(slice.buffer)).getUint32(0) & 0x7fffffff;
+      const chars = '23456789BCDFGHJKMNPQRTVWXY';
+      let code = '';
+      for (let i = 0; i < 5; i++) {
+        code += chars[codeInt % chars.length];
+        codeInt = Math.floor(codeInt / chars.length);
+      }
+      return code;
+    }
+
+    let intervalId;
+    function startTimer() {
+      if (intervalId) clearInterval(intervalId);
+      intervalId = setInterval(async () => {
+        const now = Date.now();
+        const rem = 30 - Math.floor((now / 1000) % 30);
+        document.getElementById('timer').textContent = `${rem}s`;
+        try {
+          const secretB64 = document.getElementById('secret').value;
+          const bytes = base64ToBytes(secretB64);
+          const code = await generateSteamCode(bytes);
+          document.getElementById('totp').textContent = code;
+        } catch {
+          document.getElementById('totp').textContent = 'Error';
+        }
+      }, 1000);
+    }
+
+    document.getElementById('secret').addEventListener('input', startTimer);
+    document.getElementById('copyBtn').addEventListener('click', () => {
+      navigator.clipboard.writeText(document.getElementById('totp').textContent);
+      alert('Copied!');
+    });
+  </script>
+</body>
+</html>
